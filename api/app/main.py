@@ -37,13 +37,9 @@ async def health():
     except Exception as e:
         checks["redis"] = f"error: {e}"
 
-    # ponytail: config-presence only — don't burn Azure tokens on every probe.
+    # ponytail: config-presence only — don't burn OpenAI tokens on every probe.
     # Add a live embeddings ping if you need to detect key revocation.
-    checks["azure"] = (
-        "ok"
-        if settings.azure_openai_endpoint and settings.azure_openai_api_key
-        else "unconfigured"
-    )
+    checks["openai"] = "ok" if settings.openai_api_key else "unconfigured"
 
     status = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
     return JSONResponse(

@@ -1,17 +1,17 @@
-"""Shared Azure OpenAI async client (lazy singleton)."""
-from openai import AsyncAzureOpenAI
+"""Shared OpenAI async client (lazy singleton).
+
+ponytail: plain OpenAI in V0. Swap to AsyncAzureOpenAI here (+ endpoint/version
+in config) when moving client data to Azure EU for RGPD in production.
+"""
+from openai import AsyncOpenAI
 
 from .config import settings
 
-_client: AsyncAzureOpenAI | None = None
+_client: AsyncOpenAI | None = None
 
 
-def client() -> AsyncAzureOpenAI:
+def client() -> AsyncOpenAI:
     global _client
     if _client is None:
-        _client = AsyncAzureOpenAI(
-            azure_endpoint=settings.azure_openai_endpoint,
-            api_key=settings.azure_openai_api_key,
-            api_version=settings.azure_openai_api_version,
-        )
+        _client = AsyncOpenAI(api_key=settings.openai_api_key)
     return _client

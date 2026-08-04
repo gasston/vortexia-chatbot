@@ -14,7 +14,7 @@ async def _create(texts: list[str]):
     for attempt in range(MAX_RETRIES):
         try:
             return await client().embeddings.create(
-                model=settings.azure_openai_embedding_deployment,
+                model=settings.embedding_model,
                 input=texts,
             )
         except (RateLimitError, APIConnectionError, APIStatusError):

@@ -42,7 +42,7 @@ async def stream_answer(tenant: dict, chunks: list[dict], history: list[dict], q
     messages.append({"role": "user", "content": question})
 
     stream = await client().chat.completions.create(
-        model=settings.azure_openai_chat_deployment,
+        model=settings.chat_model,
         messages=messages,
         temperature=0.2,
         max_tokens=500,
