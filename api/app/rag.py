@@ -25,6 +25,10 @@ async def answer(pool, tenant: dict, history: list[dict], question: str):
     async for delta in generator.stream_answer(tenant, chunks, history, question):
         yield {"type": "token", "delta": delta}
 
-    yield {"type": "sources",
-           "sources": [{"url": c["url"], "title": c["title"]} for c in chunks]}
+    seen, sources = set(), []
+    for c in chunks:  # dedupe by url, preserve retrieval order
+        if c["url"] not in seen:
+            seen.add(c["url"])
+            sources.append({"url": c["url"], "title": c["title"]})
+    yield {"type": "sources", "sources": sources}
     yield {"type": "done"}
