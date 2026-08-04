@@ -1,0 +1,108 @@
+"""Public v1 API: sessions, tenant config, SSE chat."""
+import json
+import time
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from . import rag
+from .deps import client_ip, enforce_rate_limit, ip_hash, resolve_tenant
+
+router = APIRouter(prefix="/v1")
+
+HISTORY_TURNS = 6
+
+
+class ChatIn(BaseModel):
+    session_id: str
+    message: str
+
+
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _uuid(value: str) -> UUID:
+    try:
+        return UUID(value)
+    except ValueError:
+        raise HTTPException(400, "invalid session_id")
+
+
+@router.post("/sessions")
+async def create_session(request: Request, tenant=Depends(resolve_tenant)):
+    session_id = await request.app.state.pool.fetchval(
+        "INSERT INTO sessions (tenant_id, ip_hash, user_agent) VALUES ($1, $2, $3) RETURNING id",
+        tenant["id"], ip_hash(client_ip(request)), request.headers.get("user-agent"),
+    )
+    return {"session_id": str(session_id)}
+
+
+@router.get("/tenants/{tenant_id}/config")
+async def tenant_config(tenant_id: str, request: Request):
+    pool = request.app.state.pool
+    row = await pool.fetchrow("SELECT * FROM tenants WHERE id = $1", tenant_id)
+    if row is None or row["status"] != "active":
+        raise HTTPException(404, "tenant not found")
+    suggestions = await pool.fetch(
+        "SELECT question FROM suggestions WHERE tenant_id = $1 ORDER BY position", tenant_id
+    )
+    return {
+        "tenant_id": row["id"],
+        "display_name": row["display_name"],
+        "logo_url": row["logo_url"],
+        "primary_color": row["primary_color"],
+        "suggestions": [r["question"] for r in suggestions],
+    }
+
+
+@router.post("/chat")
+async def chat(body: ChatIn, request: Request, tenant=Depends(resolve_tenant)):
+    pool = request.app.state.pool
+    redis = request.app.state.redis
+    session_id = _uuid(body.session_id)
+
+    if await pool.fetchval(
+        "SELECT 1 FROM sessions WHERE id = $1 AND tenant_id = $2", session_id, tenant["id"]
+    ) is None:
+        raise HTTPException(404, "session not found")
+
+    await enforce_rate_limit(redis, tenant["id"], ip_hash(client_ip(request)))
+
+    # history = prior turns of this session (spec R6: kept during session)
+    rows = await pool.fetch(
+        "SELECT role, content FROM messages WHERE session_id = $1 "
+        "ORDER BY created_at DESC LIMIT $2",
+        session_id, HISTORY_TURNS,
+    )
+    history = [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+
+    await pool.execute(
+        "INSERT INTO messages (session_id, tenant_id, role, content) VALUES ($1, $2, 'user', $3)",
+        session_id, tenant["id"], body.message,
+    )
+    await pool.execute("UPDATE sessions SET last_seen_at = NOW() WHERE id = $1", session_id)
+
+    async def event_stream():
+        start = time.time()
+        parts, sources = [], []
+        async for ev in rag.answer(pool, tenant, history, body.message):
+            if ev["type"] == "token":
+                parts.append(ev["delta"])
+                yield _sse("token", {"delta": ev["delta"]})
+            elif ev["type"] == "sources":
+                sources = ev["sources"]
+                yield _sse("sources", {"sources": sources})
+            elif ev["type"] == "done":
+                latency_ms = int((time.time() - start) * 1000)
+                message_id = await pool.fetchval(
+                    "INSERT INTO messages "
+                    "(session_id, tenant_id, role, content, sources_cited, latency_ms) "
+                    "VALUES ($1, $2, 'assistant', $3, $4::jsonb, $5) RETURNING id",
+                    session_id, tenant["id"], "".join(parts), json.dumps(sources), latency_ms,
+                )
+                yield _sse("done", {"message_id": str(message_id), "latency_ms": latency_ms})
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")

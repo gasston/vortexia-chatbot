@@ -2,10 +2,12 @@ from contextlib import asynccontextmanager
 
 import asyncpg
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 
 from .config import settings
+from .routes import router
 
 
 @asynccontextmanager
@@ -18,6 +20,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Vortexia Chatbot API", lifespan=lifespan)
+
+# CORS: open for the embeddable widget in V0 (spec 4.10 — tighten to per-tenant allowlist in V1)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(router)
 
 
 @app.get("/health")
