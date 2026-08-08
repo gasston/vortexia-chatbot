@@ -1,6 +1,7 @@
 """Public v1 API: sessions, tenant config, SSE chat."""
 import json
 import time
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -8,7 +9,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from . import rag
-from .deps import client_ip, enforce_rate_limit, ip_hash, resolve_tenant
+from .deps import client_ip, enforce_rate_limit, ip_hash, require_admin, resolve_tenant
+from .observability import CHAT_LATENCY, CHAT_REQUESTS, log
 
 router = APIRouter(prefix="/v1")
 
@@ -69,7 +71,11 @@ async def chat(body: ChatIn, request: Request, tenant=Depends(resolve_tenant)):
     ) is None:
         raise HTTPException(404, "session not found")
 
-    await enforce_rate_limit(redis, tenant["id"], ip_hash(client_ip(request)))
+    try:
+        await enforce_rate_limit(redis, tenant["id"], ip_hash(client_ip(request)))
+    except HTTPException:
+        CHAT_REQUESTS.labels(tenant["id"], "rate_limited").inc()
+        raise
 
     # history = prior turns of this session (spec R6: kept during session)
     rows = await pool.fetch(
@@ -103,6 +109,43 @@ async def chat(body: ChatIn, request: Request, tenant=Depends(resolve_tenant)):
                     "VALUES ($1, $2, 'assistant', $3, $4::jsonb, $5) RETURNING id",
                     session_id, tenant["id"], "".join(parts), json.dumps(sources), latency_ms,
                 )
+                CHAT_REQUESTS.labels(tenant["id"], "ok").inc()
+                CHAT_LATENCY.labels(tenant["id"]).observe(time.time() - start)
+                log.info(
+                    "chat_done", tenant_id=tenant["id"], session_id=str(session_id),
+                    latency_ms=latency_ms, sources=len(sources),
+                )
                 yield _sse("done", {"message_id": str(message_id), "latency_ms": latency_ms})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+class TenantPatch(BaseModel):
+    status: str | None = None  # 'active' | 'inactive' → deactivation (US-A2)
+    expires_at: datetime | None = None
+    fallback_message: str | None = None
+
+
+@router.patch("/admin/tenants/{tenant_id}", dependencies=[Depends(require_admin)])
+async def admin_patch_tenant(tenant_id: str, body: TenantPatch, request: Request):
+    # keys are whitelisted by TenantPatch fields → safe to interpolate as columns
+    fields = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not fields:
+        raise HTTPException(400, "no fields to update")
+    sets = ", ".join(f"{k} = ${i + 2}" for i, k in enumerate(fields))
+    res = await request.app.state.pool.execute(
+        f"UPDATE tenants SET {sets} WHERE id = $1", tenant_id, *fields.values()
+    )
+    if res.endswith(" 0"):
+        raise HTTPException(404, "tenant not found")
+    return {"updated": list(fields)}
+
+
+@router.delete("/admin/tenants/{tenant_id}", dependencies=[Depends(require_admin)])
+async def admin_delete_tenant(tenant_id: str, request: Request):
+    # ON DELETE CASCADE purges sources, chunks, suggestions, sessions, messages
+    res = await request.app.state.pool.execute("DELETE FROM tenants WHERE id = $1", tenant_id)
+    if res.endswith(" 0"):
+        raise HTTPException(404, "tenant not found")
+    log.info("tenant_deleted", tenant_id=tenant_id)
+    return {"deleted": tenant_id}

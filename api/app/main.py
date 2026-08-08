@@ -3,15 +3,18 @@ from contextlib import asynccontextmanager
 import asyncpg
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from redis.asyncio import Redis
 
 from .config import settings
+from .observability import configure_logging
 from .routes import router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_logging()
     app.state.pool = await asyncpg.create_pool(settings.database_url)
     app.state.redis = Redis.from_url(settings.redis_url)
     yield
@@ -58,3 +61,8 @@ async def health():
         {"status": status, "checks": checks},
         status_code=200 if status == "ok" else 503,
     )
+
+
+@app.get("/metrics")
+async def metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

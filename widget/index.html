@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vortexia widget — test harness</title>
+    <style>
+      body { font-family: system-ui, sans-serif; padding: 40px; color: #333; }
+    </style>
+  </head>
+  <body>
+    <h1>Page hôte de test</h1>
+    <p>Le widget doit apparaître en bas à droite. API locale sur :8000.</p>
+
+    <!-- Local dev: api-base points at the local FastAPI. In prod it defaults to the hosted API. -->
+    <vortexia-chat tenant="vortexia" position="bottom-right" api-base="http://localhost:8000"></vortexia-chat>
+
+    <script type="module" src="/src/vortexia-chat.ts"></script>
+  </body>
+</html>

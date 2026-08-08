@@ -38,7 +38,8 @@ async def resolve_tenant(request: Request, x_tenant_id: str = Header(...)) -> di
     return tenant
 
 
-async def require_admin(x_admin_key: str = Header(...)):
+async def require_admin(x_admin_key: str | None = Header(None)):
+    # missing OR wrong key → 401 (not 422): both are "unauthenticated" at this trust boundary
     if not settings.admin_api_key or x_admin_key != settings.admin_api_key:
         raise HTTPException(401, "invalid admin key")
 

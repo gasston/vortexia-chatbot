@@ -14,5 +14,7 @@ class Settings(BaseSettings):
     admin_api_key: str = ""
     ip_salt: str = ""
 
+    demo_domain: str = "demo.vortexia.agency"  # {tenant}.{demo_domain}
+
 
 settings = Settings()
