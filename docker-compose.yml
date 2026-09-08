@@ -35,8 +35,6 @@ services:
 
   demo:
     build: ./web
-    ports:
-      - "3000:3000"
     environment:
       NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE:-https://api-chat.vortexia.agency}
     depends_on:
