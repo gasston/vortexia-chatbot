@@ -14,7 +14,7 @@ const status = ref<"loading" | "ready" | "error">("loading")
 const config = ref<Config | null>(null)
 const tenant = ref("")
 
-// Prod: {tenant}.demo.vortexia.agency (Traefik). Local dev: ?tenant= or default.
+// Prod: {tenant}.demo.getvortexia.com (Traefik). Local dev: ?tenant= or default.
 function resolveTenant(): string {
   const m = location.hostname.match(/^([a-z0-9-]+)\.demo\./i)
   if (m) return m[1]

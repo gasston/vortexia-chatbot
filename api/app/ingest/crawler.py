@@ -11,7 +11,7 @@ from xml.etree import ElementTree
 import httpx
 from lxml import html as lxml_html
 
-USER_AGENT = "VortexiaBot/0.1 (+https://vortexia.agency/bot)"
+USER_AGENT = "VortexiaBot/0.1 (+https://getvortexia.com/bot)"
 EXCLUDE = ("/wp-admin", "/cart", "/checkout", "/account", "?add-to-cart=")
 MAX_PAGES = 200
 MAX_DEPTH = 3

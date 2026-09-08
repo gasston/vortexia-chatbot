@@ -36,7 +36,7 @@ services:
   demo:
     build: ./web
     environment:
-      NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE:-https://api-chat.vortexia.agency}
+      NUXT_PUBLIC_API_BASE: ${NUXT_PUBLIC_API_BASE:-https://api-chat.getvortexia.com}
     depends_on:
       - api
 
