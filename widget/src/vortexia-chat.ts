@@ -15,7 +15,7 @@ type Config = {
   suggestions: string[]
 }
 
-const DEFAULT_API = "https://api.vortexia.agency"
+const DEFAULT_API = "https://api-chat.vortexia.agency"
 
 @customElement("vortexia-chat")
 export class VortexiaChat extends LitElement {
