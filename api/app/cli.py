@@ -122,13 +122,22 @@ def demo_create(
     name: str = typer.Option(None, help="Nom affiché (défaut: tenant id)"),
 ):
     """Provisionne une démo de bout en bout et affiche l'URL + suggestions à coller dans un mail."""
-    questions = asyncio.run(_ingest(url, tenant, dry_run=False, activate=True, name=name))
-    demo_url = f"https://{tenant}.{settings.demo_domain}"
+    from .provision import create_demo as _create_demo
+
+    async def _run():
+        pool = await asyncpg.create_pool(settings.database_url)
+        result = await _create_demo(pool, url, tenant, name)
+        await pool.close()
+        return result
+
+    result = asyncio.run(_run())
+    demo_url = f"https://demo.{settings.demo_domain}/?tenant={tenant}"
     typer.echo("\n" + "─" * 52)
     typer.secho(f"✅ Démo prête : {demo_url}", fg=typer.colors.GREEN, bold=True)
-    if questions:
+    typer.echo(f"crawled {result['pages_crawled']} pages, {result['chunks']} chunks")
+    if result["suggestions"]:
         typer.echo("Questions suggérées (à coller dans le cold email) :")
-        for q in questions:
+        for q in result["suggestions"]:
             typer.echo(f"  • {q}")
     typer.echo("─" * 52)
 

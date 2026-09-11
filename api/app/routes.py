@@ -9,8 +9,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from . import rag
+from .config import settings
 from .deps import client_ip, enforce_rate_limit, ip_hash, require_admin, resolve_tenant
 from .observability import CHAT_LATENCY, CHAT_REQUESTS, log
+from .provision import create_demo
 
 router = APIRouter(prefix="/v1")
 
@@ -139,6 +141,21 @@ async def admin_patch_tenant(tenant_id: str, body: TenantPatch, request: Request
     if res.endswith(" 0"):
         raise HTTPException(404, "tenant not found")
     return {"updated": list(fields)}
+
+
+class DemoIn(BaseModel):
+    url: str
+    tenant: str
+    name: str | None = None
+
+
+@router.post("/admin/demos", dependencies=[Depends(require_admin)])
+async def admin_create_demo(body: DemoIn, request: Request):
+    result = await create_demo(request.app.state.pool, body.url, body.tenant, body.name)
+    return {
+        **result,
+        "demo_url": f"https://demo.{settings.demo_domain}/?tenant={body.tenant}",
+    }
 
 
 @router.delete("/admin/tenants/{tenant_id}", dependencies=[Depends(require_admin)])
