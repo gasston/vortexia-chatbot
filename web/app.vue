@@ -49,6 +49,10 @@ onMounted(async () => {
       :tenant="tenant"
       :config="config"
     />
+    <div v-if="status === 'ready'" class="cta-banner">
+      Vous voulez ça pour votre site ?
+      <a href="https://vortexia.agency/contact" target="_blank" rel="noopener">Contactez-nous →</a>
+    </div>
   </div>
 </template>
 
@@ -68,7 +72,18 @@ body {
   background: var(--bg);
   color: var(--text);
 }
-.page { height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.page { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px 24px 0; }
+.cta-banner {
+  width: 100%; max-width: 480px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.cta-banner a { color: var(--brand); font-weight: 600; text-decoration: none; margin-left: 6px; }
+.cta-banner a:hover { text-decoration: underline; }
 .center { display: flex; align-items: center; justify-content: center; height: 100%; }
 .muted { color: var(--muted); }
 </style>
