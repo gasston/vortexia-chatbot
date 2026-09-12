@@ -50,10 +50,15 @@ function parseFrame(frame: string): { event: string; data: string } {
   return { event, data }
 }
 
+function umamiTrack(event: string, data?: Record<string, unknown>) {
+  try { (window as any).umami?.track(event, data) } catch {}
+}
+
 async function send(text: string) {
   text = text.trim()
   if (!text || streaming.value) return
   input.value = ""
+  umamiTrack("chat_message", { tenant: props.tenant, question: text })
 
   if (!sessionId.value) {
     const r = await fetch(`${props.apiBase}/v1/sessions`, {
@@ -120,7 +125,7 @@ async function send(text: string) {
             v-for="q in config.suggestions"
             :key="q"
             class="chip"
-            @click="send(q)"
+            @click="umamiTrack('chat_suggestion', { tenant: props.tenant, suggestion: q }); send(q)"
           >{{ q }}</button>
         </div>
       </div>

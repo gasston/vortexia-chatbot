@@ -51,7 +51,12 @@ onMounted(async () => {
     />
     <div v-if="status === 'ready'" class="cta-banner">
       Vous voulez ça pour votre site ?
-      <a href="https://vortexia.agency/contact" target="_blank" rel="noopener">Contactez-nous →</a>
+      <a
+        href="https://vortexia.agency/contact"
+        target="_blank"
+        rel="noopener"
+        @click="(window as any).umami?.track('cta_contact', { tenant })"
+      >Contactez-nous →</a>
     </div>
   </div>
 </template>
