@@ -10,7 +10,7 @@ from .retriever import to_vector
 
 
 async def create_demo(pool, url: str, tenant: str, name: str | None = None) -> dict:
-    """Crawl url, embed, persist tenant + chunks, activate. Returns demo metadata."""
+    """Crawl url, embed, persist tenant + chunks + scripted Q&A, activate."""
     pages = await crawl(url)
     docs = [d for d in (extract(u, h) for u, h in pages.items()) if d]
 
@@ -53,6 +53,27 @@ async def create_demo(pool, url: str, tenant: str, name: str | None = None) -> d
             tenant, q, i,
         )
 
+    # Scripted Q&A: run RAG on first 2 suggestions, store full answers + source URLs
+    # These power the auto-playing hero conversation on the demo page.
+    tenant_row = dict(await pool.fetchrow("SELECT * FROM tenants WHERE id = $1", tenant))
+    await pool.execute("DELETE FROM scripted_qa WHERE tenant_id = $1", tenant)
+    scripted = []
+    for i, q in enumerate(questions[:2], start=1):
+        parts, source_url = [], None
+        async for ev in rag.answer(pool, tenant_row, [], q):
+            if ev["type"] == "token":
+                parts.append(ev["delta"])
+            elif ev["type"] == "sources" and ev["sources"]:
+                source_url = ev["sources"][0]["url"]
+        answer = "".join(parts).strip()
+        if answer:
+            await pool.execute(
+                """INSERT INTO scripted_qa (tenant_id, position, question, answer, source_url)
+                   VALUES ($1, $2, $3, $4, $5)""",
+                tenant, i, q, answer, source_url,
+            )
+            scripted.append({"question": q, "answer": answer, "source_url": source_url})
+
     await pool.execute(
         "UPDATE tenants SET status = 'active', expires_at = NOW() + INTERVAL '30 days' WHERE id = $1",
         tenant,
@@ -63,4 +84,5 @@ async def create_demo(pool, url: str, tenant: str, name: str | None = None) -> d
         "pages_crawled": len(pages),
         "chunks": n_chunks,
         "suggestions": questions,
+        "scripted_qa": scripted,
     }

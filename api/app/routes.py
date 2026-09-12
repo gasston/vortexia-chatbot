@@ -1,4 +1,5 @@
 """Public v1 API: sessions, tenant config, SSE chat."""
+import asyncio
 import json
 import time
 from datetime import datetime
@@ -50,15 +51,27 @@ async def tenant_config(tenant_id: str, request: Request):
     row = await pool.fetchrow("SELECT * FROM tenants WHERE id = $1", tenant_id)
     if row is None or row["status"] != "active":
         raise HTTPException(404, "tenant not found")
-    suggestions = await pool.fetch(
-        "SELECT question FROM suggestions WHERE tenant_id = $1 ORDER BY position", tenant_id
+
+    suggestions, pages_count, sample_pages, scripted_qa = await asyncio.gather(
+        pool.fetch("SELECT question FROM suggestions WHERE tenant_id = $1 ORDER BY position", tenant_id),
+        pool.fetchval("SELECT COUNT(*) FROM sources WHERE tenant_id = $1", tenant_id),
+        pool.fetch("SELECT title, url FROM sources WHERE tenant_id = $1 ORDER BY fetched_at LIMIT 6", tenant_id),
+        pool.fetch("SELECT question, answer, source_url FROM scripted_qa WHERE tenant_id = $1 ORDER BY position", tenant_id),
     )
+
     return {
         "tenant_id": row["id"],
         "display_name": row["display_name"],
         "logo_url": row["logo_url"],
         "primary_color": row["primary_color"],
         "suggestions": [r["question"] for r in suggestions],
+        "pages_count": pages_count or 0,
+        "crawled_at": row["created_at"].date().isoformat() if row["created_at"] else None,
+        "sample_pages": [{"title": r["title"], "url": r["url"]} for r in sample_pages],
+        "scripted_qa": [
+            {"question": r["question"], "answer": r["answer"], "source_url": r["source_url"]}
+            for r in scripted_qa
+        ],
     }
 
 

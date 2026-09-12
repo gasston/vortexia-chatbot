@@ -4,11 +4,13 @@ import { marked } from "marked"
 import DOMPurify from "dompurify"
 
 type Source = { url: string; title: string | null }
-type Msg = { role: "user" | "assistant"; content: string; sources?: Source[] }
+type ScriptedQA = { question: string; answer: string; source_url: string | null }
+type Msg = { role: "user" | "assistant"; content: string; sources?: Source[]; sourceUrl?: string | null }
 type Config = {
   display_name: string
   logo_url: string | null
   suggestions: string[]
+  scripted_qa?: ScriptedQA[]
 }
 
 const props = defineProps<{ apiBase: string; tenant: string; config: Config }>()
@@ -29,6 +31,14 @@ function uniqueSources(sources: Source[] = []): Source[] {
   }).slice(0, 3)
 }
 
+function sourcePath(url: string | null | undefined): string {
+  if (!url) return ""
+  try {
+    const u = new URL(url)
+    return u.pathname + u.hash || "/"
+  } catch { return url }
+}
+
 function umamiTrack(event: string, data?: Record<string, unknown>) {
   try { (window as any).umami?.track(event, data) } catch {}
 }
@@ -36,22 +46,76 @@ function umamiTrack(event: string, data?: Record<string, unknown>) {
 const messages = ref<Msg[]>([])
 const input = ref("")
 const streaming = ref(false)
+const scripting = ref(false) // auto-playing intro, blocks user input
 const sessionId = ref<string | null>(null)
 const scroller = ref<HTMLElement | null>(null)
+const inputEl = ref<HTMLInputElement | null>(null)
+
+const reducedMotion = typeof window !== "undefined"
+  && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+
+function focusInput() {
+  inputEl.value?.focus()
+}
+defineExpose({ focusInput })
 
 async function scrollDown() {
   await nextTick()
   if (scroller.value) scroller.value.scrollTop = scroller.value.scrollHeight
 }
 
-onMounted(async () => {
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+async function ensureSession() {
+  if (sessionId.value) return
   try {
     const r = await fetch(`${props.apiBase}/v1/sessions`, {
       method: "POST",
       headers: { "X-Tenant-Id": props.tenant },
     })
     sessionId.value = (await r.json()).session_id
-  } catch { /* lazy init on first send */ }
+  } catch { /* lazy retry on send */ }
+}
+
+// Auto-play the scripted conversation (2 real Q&A from the prospect's own site).
+async function playScript() {
+  const script = props.config.scripted_qa || []
+  if (!script.length) return
+
+  if (reducedMotion) {
+    for (const qa of script) {
+      messages.value.push({ role: "user", content: qa.question })
+      messages.value.push({ role: "assistant", content: qa.answer, sourceUrl: qa.source_url })
+    }
+    scrollDown()
+    return
+  }
+
+  scripting.value = true
+  for (const qa of script) {
+    messages.value.push({ role: "user", content: qa.question })
+    scrollDown()
+    await sleep(700)
+
+    const asst = reactive<Msg>({ role: "assistant", content: "", sourceUrl: qa.source_url })
+    messages.value.push(asst)
+    await sleep(900) // typing indicator dwell
+
+    // Type out the answer word by word
+    const words = qa.answer.split(" ")
+    for (let i = 0; i < words.length; i++) {
+      asst.content += (i ? " " : "") + words[i]
+      if (i % 2 === 0) await sleep(28)
+      scrollDown()
+    }
+    await sleep(600)
+  }
+  scripting.value = false
+}
+
+onMounted(async () => {
+  await ensureSession()
+  playScript()
 })
 
 function parseFrame(frame: string): { event: string; data: string } {
@@ -66,17 +130,11 @@ function parseFrame(frame: string): { event: string; data: string } {
 
 async function send(text: string) {
   text = text.trim()
-  if (!text || streaming.value) return
+  if (!text || streaming.value || scripting.value) return
   input.value = ""
   umamiTrack("chat_message", { tenant: props.tenant, question: text })
 
-  if (!sessionId.value) {
-    const r = await fetch(`${props.apiBase}/v1/sessions`, {
-      method: "POST",
-      headers: { "X-Tenant-Id": props.tenant },
-    })
-    sessionId.value = (await r.json()).session_id
-  }
+  await ensureSession()
 
   messages.value.push({ role: "user", content: text })
   const asst = reactive<Msg>({ role: "assistant", content: "", sources: [] })
@@ -121,7 +179,7 @@ async function send(text: string) {
 
 <template>
   <div class="chat">
-    <!-- Header -->
+    <!-- Header carries the PROSPECT's brand, not ours -->
     <header class="head">
       <img v-if="config.logo_url" :src="config.logo_url" :alt="config.display_name" class="logo" />
       <div class="head-info">
@@ -134,66 +192,52 @@ async function send(text: string) {
       </div>
     </header>
 
-    <!-- Messages -->
     <div ref="scroller" class="stream">
-      <!-- Empty state -->
-      <div v-if="!messages.length" class="empty">
-        <div class="greeting">
-          <span class="greeting-icon">👋</span>
-          <p>
-            <strong>Bonjour !</strong><br>
-            Je connais le site <strong>{{ config.display_name }}</strong>.<br>
-            Posez-moi une question ou choisissez un exemple.
-          </p>
-        </div>
-        <div v-if="config.suggestions.length" class="suggestions">
-          <button
-            v-for="q in config.suggestions"
-            :key="q"
-            class="chip"
-            @click="umamiTrack('chat_suggestion', { tenant: props.tenant, suggestion: q }); send(q)"
-          >{{ q }}</button>
-        </div>
-      </div>
-
-      <!-- Message list -->
       <div v-for="(m, i) in messages" :key="i" :class="['msg', m.role]">
-        <!-- Typing indicator -->
-        <div v-if="m.role === 'assistant' && streaming && i === messages.length - 1 && !m.content" class="bubble typing">
-          <span class="dot"></span>
-          <span class="dot"></span>
-          <span class="dot"></span>
+        <!-- Typing indicator: streaming OR scripting, empty assistant, last message -->
+        <div
+          v-if="m.role === 'assistant' && (streaming || scripting) && i === messages.length - 1 && !m.content"
+          class="bubble typing"
+        >
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
         </div>
-        <!-- Message bubble -->
         <template v-else>
           <div v-if="m.role === 'assistant'" class="bubble md" v-html="render(m.content)" />
           <div v-else class="bubble">{{ m.content }}</div>
         </template>
 
-        <!-- Sources -->
-        <div v-if="m.sources && uniqueSources(m.sources).length" class="sources-block">
-          <span class="sources-label">Sources consultées</span>
+        <!-- Single source pill (scripted) -->
+        <a
+          v-if="m.sourceUrl"
+          :href="m.sourceUrl"
+          target="_blank"
+          rel="noopener"
+          class="source-pill"
+        >Source : {{ sourcePath(m.sourceUrl) }}</a>
+
+        <!-- Multi-source (live chat) -->
+        <div v-else-if="m.sources && uniqueSources(m.sources).length" class="sources-block">
           <a
             v-for="s in uniqueSources(m.sources)"
             :key="s.url"
             :href="s.url"
             target="_blank"
             rel="noopener"
-            class="source-link"
-          >↗ {{ s.title || s.url }}</a>
+            class="source-pill"
+          >Source : {{ sourcePath(s.url) }}</a>
         </div>
       </div>
     </div>
 
-    <!-- Composer -->
     <form class="composer" @submit.prevent="send(input)">
       <input
+        ref="inputEl"
         v-model="input"
-        :disabled="streaming"
-        placeholder="Votre question…"
-        autofocus
+        :disabled="scripting"
+        :placeholder="scripting ? 'Un instant…' : 'Posez votre question…'"
+        aria-label="Votre question"
       />
-      <button type="submit" :disabled="streaming || !input.trim()">
+      <button type="submit" :disabled="streaming || scripting || !input.trim()" aria-label="Envoyer">
         <span v-if="streaming" class="spinner"></span>
         <span v-else>↑</span>
       </button>
@@ -205,14 +249,15 @@ async function send(text: string) {
 .chat {
   width: 100%;
   max-width: 520px;
-  height: min(660px, 85vh);
+  height: min(600px, 78vh);
+  min-height: 480px;
   display: flex;
   flex-direction: column;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
   overflow: hidden;
-  box-shadow: 0 4px 6px -1px rgba(0,0,0,.04), 0 16px 48px -8px rgba(0,0,0,.10);
+  box-shadow: 0 2px 4px -1px rgba(0,0,0,.03), 0 18px 44px -12px rgba(0,0,0,.14);
 }
 
 /* Header */
@@ -225,7 +270,7 @@ async function send(text: string) {
   color: #fff;
   flex-shrink: 0;
 }
-.logo { height: 26px; width: auto; border-radius: 4px; }
+.logo { height: 26px; width: auto; border-radius: 4px; background: #fff; padding: 2px; }
 .head-info { display: flex; flex-direction: column; gap: 1px; }
 .head-name { font-weight: 600; font-size: 0.9rem; line-height: 1; }
 .head-badge { font-size: 11px; opacity: 0.7; }
@@ -235,19 +280,15 @@ async function send(text: string) {
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  opacity: 0.9;
+  opacity: 0.92;
 }
 .green-dot {
-  width: 7px;
-  height: 7px;
+  width: 7px; height: 7px;
   background: #4ade80;
   border-radius: 50%;
   animation: pulse 2s ease-in-out infinite;
 }
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .4 } }
 
 /* Stream */
 .stream {
@@ -256,177 +297,90 @@ async function send(text: string) {
   padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  scroll-behavior: smooth;
+  gap: 14px;
 }
-
-/* Empty state */
-.empty {
-  margin: auto 0;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-.greeting {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-}
-.greeting-icon { font-size: 1.4rem; flex-shrink: 0; }
-.greeting p {
-  margin: 0;
-  font-size: 0.9rem;
-  color: var(--text);
-  line-height: 1.6;
-}
-.suggestions { display: flex; flex-direction: column; gap: 8px; }
-.chip {
-  border: 1px solid var(--border);
-  background: #fff;
-  padding: 10px 14px;
-  border-radius: 10px;
-  cursor: pointer;
-  font-size: 0.875rem;
-  text-align: left;
-  color: var(--text);
-  transition: border-color 0.15s, background 0.15s;
-  line-height: 1.4;
-}
-.chip:hover { border-color: var(--brand); background: var(--subtle, #f9fafb); }
 
 /* Messages */
-.msg {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  max-width: 88%;
-  animation: fadeUp 0.2s ease;
-}
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
+.msg { display: flex; flex-direction: column; gap: 6px; max-width: 88%; animation: fadeUp .2s ease; }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(5px) } to { opacity: 1; transform: none } }
 .msg.user { align-self: flex-end; align-items: flex-end; }
 .msg.assistant { align-self: flex-start; }
 
-.bubble {
-  padding: 10px 14px;
-  border-radius: 12px;
-  line-height: 1.55;
-  font-size: 0.9rem;
-}
-.msg.user .bubble {
-  background: var(--text);
-  color: #fff;
-  border-bottom-right-radius: 4px;
-}
-.msg.assistant .bubble {
-  background: #f3f4f6;
-  color: var(--text);
-  border-bottom-left-radius: 4px;
-}
+.bubble { padding: 10px 14px; border-radius: 12px; line-height: 1.55; font-size: 0.9rem; }
+.msg.user .bubble { background: var(--ink); color: #fff; border-bottom-right-radius: 4px; }
+.msg.assistant .bubble { background: #F3F3F1; color: var(--ink); border-bottom-left-radius: 4px; }
 .md :deep(p) { margin: 0 0 8px; }
 .md :deep(p:last-child) { margin-bottom: 0; }
 .md :deep(ul), .md :deep(ol) { margin: 6px 0; padding-left: 18px; }
 .md :deep(li) { margin-bottom: 4px; }
 .md :deep(a) { color: var(--brand); }
-.md :deep(code) { background: #e5e7eb; padding: 1px 5px; border-radius: 4px; font-size: 0.85em; }
 
-/* Typing indicator */
-.typing {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 12px 16px;
-  min-width: 52px;
-}
-.dot {
-  width: 6px;
-  height: 6px;
-  background: #9ca3af;
-  border-radius: 50%;
-  animation: bounce 1.2s ease-in-out infinite;
-}
-.dot:nth-child(2) { animation-delay: 0.2s; }
-.dot:nth-child(3) { animation-delay: 0.4s; }
-@keyframes bounce {
-  0%, 80%, 100% { transform: translateY(0); }
-  40% { transform: translateY(-5px); }
-}
+/* Typing */
+.typing { display: flex; align-items: center; gap: 5px; padding: 13px 16px; min-width: 50px; }
+.dot { width: 6px; height: 6px; background: #9ca3af; border-radius: 50%; animation: bounce 1.2s ease-in-out infinite; }
+.dot:nth-child(2) { animation-delay: .2s }
+.dot:nth-child(3) { animation-delay: .4s }
+@keyframes bounce { 0%,80%,100% { transform: none } 40% { transform: translateY(-5px) } }
 
-/* Sources */
-.sources-block {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 0 2px;
-}
-.sources-label {
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-}
-.source-link {
-  font-size: 12px;
-  color: var(--muted);
+/* Source pill */
+.sources-block { display: flex; flex-direction: column; gap: 3px; }
+.source-pill {
+  font-family: "DM Mono", monospace;
+  font-size: 0.7rem;
+  color: var(--quiet);
   text-decoration: none;
-  transition: color 0.15s;
-  white-space: nowrap;
+  border: 1px solid var(--line);
+  padding: 3px 8px;
+  border-radius: 5px;
+  align-self: flex-start;
+  transition: border-color .15s, color .15s;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 280px;
+  white-space: nowrap;
 }
-.source-link:hover { color: var(--brand); }
+.source-pill:hover { color: var(--brand); border-color: var(--brand); }
 
 /* Composer */
-.composer {
-  display: flex;
-  gap: 8px;
-  padding: 12px;
-  border-top: 1px solid var(--border);
-  background: #fff;
-  flex-shrink: 0;
-}
+.composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: #fff; flex-shrink: 0; }
 .composer input {
   flex: 1;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
   padding: 11px 14px;
   font-size: 0.9rem;
   outline: none;
-  background: var(--subtle, #f9fafb);
-  transition: border-color 0.15s, background 0.15s;
+  background: var(--stone);
+  transition: border-color .15s, background .15s;
   font-family: inherit;
 }
 .composer input:focus { border-color: var(--brand); background: #fff; }
+.composer input:disabled { opacity: .6; }
 .composer button {
-  width: 40px;
-  height: 40px;
+  width: 40px; height: 40px;
   border: none;
-  background: var(--text);
+  background: var(--ink);
   color: #fff;
-  border-radius: 10px;
-  font-size: 1rem;
-  font-weight: 700;
+  border-radius: 9px;
+  font-size: 1rem; font-weight: 700;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: opacity 0.15s;
+  display: flex; align-items: center; justify-content: center;
+  transition: opacity .15s;
   flex-shrink: 0;
 }
-.composer button:disabled { opacity: 0.4; cursor: default; }
+.composer button:disabled { opacity: .35; cursor: default; }
 
-/* Spinner */
 .spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid rgba(255,255,255,0.3);
+  width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,.3);
   border-top-color: #fff;
   border-radius: 50%;
-  animation: spin 0.7s linear infinite;
+  animation: spin .7s linear infinite;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes spin { to { transform: rotate(360deg) } }
+
+@media (prefers-reduced-motion: reduce) {
+  .msg { animation: none; }
+  .green-dot, .dot, .spinner { animation: none; }
+}
 </style>

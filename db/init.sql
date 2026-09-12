@@ -75,3 +75,14 @@ CREATE TABLE messages (
     created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX idx_messages_session ON messages(session_id);
+
+-- Scripted Q&A pairs for the auto-playing hero conversation (generated at ingest)
+CREATE TABLE scripted_qa (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id  TEXT REFERENCES tenants(id) ON DELETE CASCADE,
+    position   INT NOT NULL,
+    question   TEXT NOT NULL,
+    answer     TEXT NOT NULL,
+    source_url TEXT
+);
+CREATE INDEX idx_scripted_qa_tenant ON scripted_qa(tenant_id);
