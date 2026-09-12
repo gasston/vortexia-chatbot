@@ -14,8 +14,24 @@ type Config = {
 const props = defineProps<{ apiBase: string; tenant: string; config: Config }>()
 
 marked.setOptions({ breaks: true })
-// v-html on LLM output = trust boundary: sanitize (model can echo raw HTML from ingested site).
-const render = (md: string) => DOMPurify.sanitize(marked.parse(md || "") as string)
+
+const render = (md: string) => {
+  const cleaned = (md || "").replace(/\[SOURCE\s*\d+\]/gi, "").trim()
+  return DOMPurify.sanitize(marked.parse(cleaned) as string)
+}
+
+function uniqueSources(sources: Source[] = []): Source[] {
+  const seen = new Set<string>()
+  return sources.filter(s => {
+    if (seen.has(s.url)) return false
+    seen.add(s.url)
+    return true
+  }).slice(0, 3)
+}
+
+function umamiTrack(event: string, data?: Record<string, unknown>) {
+  try { (window as any).umami?.track(event, data) } catch {}
+}
 
 const messages = ref<Msg[]>([])
 const input = ref("")
@@ -35,9 +51,7 @@ onMounted(async () => {
       headers: { "X-Tenant-Id": props.tenant },
     })
     sessionId.value = (await r.json()).session_id
-  } catch {
-    /* session created lazily on first send if this failed */
-  }
+  } catch { /* lazy init on first send */ }
 })
 
 function parseFrame(frame: string): { event: string; data: string } {
@@ -48,10 +62,6 @@ function parseFrame(frame: string): { event: string; data: string } {
     else if (line.startsWith("data:")) data += line.slice(5).trim()
   }
   return { event, data }
-}
-
-function umamiTrack(event: string, data?: Record<string, unknown>) {
-  try { (window as any).umami?.track(event, data) } catch {}
 }
 
 async function send(text: string) {
@@ -90,7 +100,7 @@ async function send(text: string) {
       if (done) break
       buf += decoder.decode(value, { stream: true })
       const frames = buf.split("\n\n")
-      buf = frames.pop() ?? "" // keep the trailing incomplete frame
+      buf = frames.pop() ?? ""
       for (const f of frames) {
         const { event, data } = parseFrame(f)
         if (!data) continue
@@ -111,15 +121,31 @@ async function send(text: string) {
 
 <template>
   <div class="chat">
+    <!-- Header -->
     <header class="head">
       <img v-if="config.logo_url" :src="config.logo_url" :alt="config.display_name" class="logo" />
-      <span class="name">{{ config.display_name }}</span>
-      <span class="ai">Assistant IA</span>
+      <div class="head-info">
+        <span class="head-name">{{ config.display_name }}</span>
+        <span class="head-badge">Assistant IA</span>
+      </div>
+      <div class="online-badge">
+        <span class="green-dot"></span>
+        En ligne
+      </div>
     </header>
 
+    <!-- Messages -->
     <div ref="scroller" class="stream">
+      <!-- Empty state -->
       <div v-if="!messages.length" class="empty">
-        <p class="muted">Posez une question sur {{ config.display_name }}.</p>
+        <div class="greeting">
+          <span class="greeting-icon">👋</span>
+          <p>
+            <strong>Bonjour !</strong><br>
+            Je connais le site <strong>{{ config.display_name }}</strong>.<br>
+            Posez-moi une question ou choisissez un exemple.
+          </p>
+        </div>
         <div v-if="config.suggestions.length" class="suggestions">
           <button
             v-for="q in config.suggestions"
@@ -130,17 +156,36 @@ async function send(text: string) {
         </div>
       </div>
 
+      <!-- Message list -->
       <div v-for="(m, i) in messages" :key="i" :class="['msg', m.role]">
-        <div v-if="m.role === 'assistant'" class="bubble md" v-html="render(m.content)" />
-        <div v-else class="bubble">{{ m.content }}</div>
-        <div v-if="m.sources && m.sources.length" class="sources">
-          <a v-for="s in m.sources" :key="s.url" :href="s.url" target="_blank" rel="noopener">
-            {{ s.title || s.url }}
-          </a>
+        <!-- Typing indicator -->
+        <div v-if="m.role === 'assistant' && streaming && i === messages.length - 1 && !m.content" class="bubble typing">
+          <span class="dot"></span>
+          <span class="dot"></span>
+          <span class="dot"></span>
+        </div>
+        <!-- Message bubble -->
+        <template v-else>
+          <div v-if="m.role === 'assistant'" class="bubble md" v-html="render(m.content)" />
+          <div v-else class="bubble">{{ m.content }}</div>
+        </template>
+
+        <!-- Sources -->
+        <div v-if="m.sources && uniqueSources(m.sources).length" class="sources-block">
+          <span class="sources-label">Sources consultées</span>
+          <a
+            v-for="s in uniqueSources(m.sources)"
+            :key="s.url"
+            :href="s.url"
+            target="_blank"
+            rel="noopener"
+            class="source-link"
+          >↗ {{ s.title || s.url }}</a>
         </div>
       </div>
     </div>
 
+    <!-- Composer -->
     <form class="composer" @submit.prevent="send(input)">
       <input
         v-model="input"
@@ -149,7 +194,8 @@ async function send(text: string) {
         autofocus
       />
       <button type="submit" :disabled="streaming || !input.trim()">
-        {{ streaming ? "…" : "Envoyer" }}
+        <span v-if="streaming" class="spinner"></span>
+        <span v-else>↑</span>
       </button>
     </form>
   </div>
@@ -158,16 +204,18 @@ async function send(text: string) {
 <style scoped>
 .chat {
   width: 100%;
-  max-width: 560px;
-  height: min(720px, 92vh);
+  max-width: 520px;
+  height: min(660px, 85vh);
   display: flex;
   flex-direction: column;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,.04), 0 16px 48px -8px rgba(0,0,0,.10);
 }
+
+/* Header */
 .head {
   display: flex;
   align-items: center;
@@ -175,59 +223,210 @@ async function send(text: string) {
   padding: 14px 18px;
   background: var(--brand);
   color: #fff;
+  flex-shrink: 0;
 }
-.logo { height: 24px; width: auto; border-radius: 4px; background: #fff; }
-.name { font-weight: 600; }
-.ai { margin-left: auto; font-size: 12px; opacity: 0.8; }
+.logo { height: 26px; width: auto; border-radius: 4px; }
+.head-info { display: flex; flex-direction: column; gap: 1px; }
+.head-name { font-weight: 600; font-size: 0.9rem; line-height: 1; }
+.head-badge { font-size: 11px; opacity: 0.7; }
+.online-badge {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  opacity: 0.9;
+}
+.green-dot {
+  width: 7px;
+  height: 7px;
+  background: #4ade80;
+  border-radius: 50%;
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 
-.stream { flex: 1; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
-.empty { margin: auto 0; text-align: center; }
-.muted { color: var(--muted); }
-.suggestions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+/* Stream */
+.stream {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  scroll-behavior: smooth;
+}
+
+/* Empty state */
+.empty {
+  margin: auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.greeting {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+.greeting-icon { font-size: 1.4rem; flex-shrink: 0; }
+.greeting p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text);
+  line-height: 1.6;
+}
+.suggestions { display: flex; flex-direction: column; gap: 8px; }
 .chip {
   border: 1px solid var(--border);
   background: #fff;
   padding: 10px 14px;
   border-radius: 10px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 0.875rem;
   text-align: left;
-  transition: border-color 0.15s;
+  color: var(--text);
+  transition: border-color 0.15s, background 0.15s;
+  line-height: 1.4;
 }
-.chip:hover { border-color: var(--brand); }
+.chip:hover { border-color: var(--brand); background: var(--subtle, #f9fafb); }
 
-.msg { display: flex; flex-direction: column; gap: 6px; max-width: 85%; }
+/* Messages */
+.msg {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 88%;
+  animation: fadeUp 0.2s ease;
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 .msg.user { align-self: flex-end; align-items: flex-end; }
 .msg.assistant { align-self: flex-start; }
-.bubble { padding: 10px 14px; border-radius: 12px; line-height: 1.5; font-size: 15px; }
-.msg.user .bubble { background: var(--brand); color: #fff; border-bottom-right-radius: 4px; }
-.msg.assistant .bubble { background: #f1f3f5; color: var(--text); border-bottom-left-radius: 4px; }
+
+.bubble {
+  padding: 10px 14px;
+  border-radius: 12px;
+  line-height: 1.55;
+  font-size: 0.9rem;
+}
+.msg.user .bubble {
+  background: var(--text);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.msg.assistant .bubble {
+  background: #f3f4f6;
+  color: var(--text);
+  border-bottom-left-radius: 4px;
+}
 .md :deep(p) { margin: 0 0 8px; }
 .md :deep(p:last-child) { margin-bottom: 0; }
-.md :deep(ul), .md :deep(ol) { margin: 6px 0; padding-left: 20px; }
+.md :deep(ul), .md :deep(ol) { margin: 6px 0; padding-left: 18px; }
+.md :deep(li) { margin-bottom: 4px; }
 .md :deep(a) { color: var(--brand); }
-.sources { display: flex; flex-wrap: wrap; gap: 8px; font-size: 12px; }
-.sources a { color: var(--muted); text-decoration: none; border-bottom: 1px dotted var(--muted); }
-.sources a:hover { color: var(--brand); border-color: var(--brand); }
+.md :deep(code) { background: #e5e7eb; padding: 1px 5px; border-radius: 4px; font-size: 0.85em; }
 
-.composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--border); }
+/* Typing indicator */
+.typing {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 12px 16px;
+  min-width: 52px;
+}
+.dot {
+  width: 6px;
+  height: 6px;
+  background: #9ca3af;
+  border-radius: 50%;
+  animation: bounce 1.2s ease-in-out infinite;
+}
+.dot:nth-child(2) { animation-delay: 0.2s; }
+.dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes bounce {
+  0%, 80%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-5px); }
+}
+
+/* Sources */
+.sources-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 2px;
+}
+.sources-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.source-link {
+  font-size: 12px;
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
+.source-link:hover { color: var(--brand); }
+
+/* Composer */
+.composer {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+  background: #fff;
+  flex-shrink: 0;
+}
 .composer input {
   flex: 1;
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 11px 14px;
-  font-size: 15px;
+  font-size: 0.9rem;
   outline: none;
+  background: var(--subtle, #f9fafb);
+  transition: border-color 0.15s, background 0.15s;
+  font-family: inherit;
 }
-.composer input:focus { border-color: var(--brand); }
+.composer input:focus { border-color: var(--brand); background: #fff; }
 .composer button {
+  width: 40px;
+  height: 40px;
   border: none;
-  background: var(--brand);
+  background: var(--text);
   color: #fff;
-  padding: 0 18px;
   border-radius: 10px;
-  font-weight: 600;
+  font-size: 1rem;
+  font-weight: 700;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s;
+  flex-shrink: 0;
 }
-.composer button:disabled { opacity: 0.5; cursor: default; }
+.composer button:disabled { opacity: 0.4; cursor: default; }
+
+/* Spinner */
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>
