@@ -54,6 +54,7 @@ onMounted(async () => {
       document.documentElement.style.setProperty("--brand", config.value.primary_color)
     }
     status.value = "ready"
+    track("demo_view")
     useHead({
       title: `${config.value.display_name} — Assistant IA par Vortexia`,
       meta: [
