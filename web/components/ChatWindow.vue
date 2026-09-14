@@ -13,7 +13,15 @@ type Config = {
   scripted_qa?: ScriptedQA[]
 }
 
-const props = defineProps<{ apiBase: string; tenant: string; config: Config }>()
+const props = defineProps<{
+  apiBase: string
+  tenant: string
+  config: Config
+  hideHeader?: boolean
+  widgetMode?: boolean
+}>()
+
+const emit = defineEmits<{ 'user-message': [] }>()
 
 marked.setOptions({ breaks: true })
 
@@ -40,13 +48,14 @@ function sourcePath(url: string | null | undefined): string {
 }
 
 function umamiTrack(event: string, data?: Record<string, unknown>) {
+  try { (window as any).dataLayer?.push({ event, ...data }) } catch {}
   try { (window as any).umami?.track(event, data) } catch {}
 }
 
 const messages = ref<Msg[]>([])
 const input = ref("")
 const streaming = ref(false)
-const scripting = ref(false) // auto-playing intro, blocks user input
+const scripting = ref(false)
 const sessionId = ref<string | null>(null)
 const scroller = ref<HTMLElement | null>(null)
 const inputEl = ref<HTMLInputElement | null>(null)
@@ -57,7 +66,7 @@ const reducedMotion = typeof window !== "undefined"
 function focusInput() {
   inputEl.value?.focus()
 }
-defineExpose({ focusInput })
+defineExpose({ focusInput, send })
 
 async function scrollDown() {
   await nextTick()
@@ -77,7 +86,6 @@ async function ensureSession() {
   } catch { /* lazy retry on send */ }
 }
 
-// Auto-play the scripted conversation (2 real Q&A from the prospect's own site).
 async function playScript() {
   const script = props.config.scripted_qa || []
   if (!script.length) return
@@ -99,9 +107,8 @@ async function playScript() {
 
     const asst = reactive<Msg>({ role: "assistant", content: "", sourceUrl: qa.source_url })
     messages.value.push(asst)
-    await sleep(900) // typing indicator dwell
+    await sleep(900)
 
-    // Type out the answer word by word
     const words = qa.answer.split(" ")
     for (let i = 0; i < words.length; i++) {
       asst.content += (i ? " " : "") + words[i]
@@ -132,7 +139,10 @@ async function send(text: string) {
   text = text.trim()
   if (!text || streaming.value || scripting.value) return
   input.value = ""
+
+  emit('user-message')
   umamiTrack("chat_message", { tenant: props.tenant, question: text })
+  umamiTrack("demo_question_sent", { tenant: props.tenant })
 
   await ensureSession()
 
@@ -168,6 +178,7 @@ async function send(text: string) {
       }
       scrollDown()
     }
+    umamiTrack("demo_answer_received", { tenant: props.tenant })
   } catch (e: any) {
     if (!asst.content) asst.content = `⚠️ Erreur : ${e?.message || "réseau"}`
   } finally {
@@ -178,9 +189,8 @@ async function send(text: string) {
 </script>
 
 <template>
-  <div class="chat">
-    <!-- Header carries the PROSPECT's brand, not ours -->
-    <header class="head">
+  <div :class="['chat', { 'widget-mode': widgetMode }]">
+    <header v-if="!hideHeader" class="head">
       <img v-if="config.logo_url" :src="config.logo_url" :alt="config.display_name" class="logo" />
       <div class="head-info">
         <span class="head-name">{{ config.display_name }}</span>
@@ -194,7 +204,6 @@ async function send(text: string) {
 
     <div ref="scroller" class="stream">
       <div v-for="(m, i) in messages" :key="i" :class="['msg', m.role]">
-        <!-- Typing indicator: streaming OR scripting, empty assistant, last message -->
         <div
           v-if="m.role === 'assistant' && (streaming || scripting) && i === messages.length - 1 && !m.content"
           class="bubble typing"
@@ -206,16 +215,15 @@ async function send(text: string) {
           <div v-else class="bubble">{{ m.content }}</div>
         </template>
 
-        <!-- Single source pill (scripted) -->
         <a
           v-if="m.sourceUrl"
           :href="m.sourceUrl"
           target="_blank"
           rel="noopener"
           class="source-pill"
+          @click="umamiTrack('demo_source_click', { tenant })"
         >Source : {{ sourcePath(m.sourceUrl) }}</a>
 
-        <!-- Multi-source (live chat) -->
         <div v-else-if="m.sources && uniqueSources(m.sources).length" class="sources-block">
           <a
             v-for="s in uniqueSources(m.sources)"
@@ -224,6 +232,7 @@ async function send(text: string) {
             target="_blank"
             rel="noopener"
             class="source-pill"
+            @click="umamiTrack('demo_source_click', { tenant })"
           >Source : {{ sourcePath(s.url) }}</a>
         </div>
       </div>
@@ -258,6 +267,16 @@ async function send(text: string) {
   border-radius: 14px;
   overflow: hidden;
   box-shadow: 0 2px 4px -1px rgba(0,0,0,.03), 0 18px 44px -12px rgba(0,0,0,.14);
+}
+
+.chat.widget-mode {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  max-width: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 /* Header */
