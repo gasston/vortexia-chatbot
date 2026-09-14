@@ -328,6 +328,7 @@ onMounted(async () => {
 <style>
 :root {
   --brand: #0C0C0C;
+  --accent: #2D5BE3;
   --ink: #0C0C0C;
   --stone: #F7F7F5;
   --surface: #FFFFFF;
@@ -338,7 +339,7 @@ onMounted(async () => {
 * { box-sizing: border-box; }
 html, body, #__nuxt { margin: 0; }
 body {
-  font-family: "DM Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
   background: var(--stone);
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
@@ -403,19 +404,20 @@ h1 {
 
 .btn-primary {
   display: inline-block;
-  background: var(--ink);
+  background: var(--accent);
   color: #fff;
   padding: 14px 28px;
   border-radius: 6px;
-  font-family: "DM Sans", sans-serif;
+  font-family: "Inter", sans-serif;
   font-weight: 600;
   font-size: 0.9rem;
   text-decoration: none;
   border: none;
   cursor: pointer;
   transition: opacity 0.15s;
+  letter-spacing: -0.01em;
 }
-.btn-primary:hover { opacity: 0.78; }
+.btn-primary:hover { opacity: 0.88; }
 
 .btn-secondary {
   display: inline-flex;
@@ -428,7 +430,7 @@ h1 {
   transition: color .15s, border-color .15s;
   font-weight: 500;
 }
-.btn-secondary:hover { color: var(--ink); border-color: var(--ink); }
+.btn-secondary:hover { color: var(--accent); border-color: var(--accent); }
 
 .demo-hint {
   font-family: "DM Mono", monospace;
@@ -444,7 +446,7 @@ h1 {
   color: #fff;
   padding: 14px 28px;
   border-radius: 6px;
-  font-family: "DM Sans", sans-serif;
+  font-family: "Inter", sans-serif;
   font-weight: 600;
   font-size: 0.9rem;
   text-decoration: none;
@@ -452,6 +454,7 @@ h1 {
   cursor: pointer;
   transition: opacity 0.15s;
   align-self: flex-start;
+  letter-spacing: -0.01em;
 }
 .btn-book:hover { opacity: 0.78; }
 
@@ -467,7 +470,7 @@ h1 {
   font-family: inherit;
   transition: color .15s, border-color .15s;
 }
-.micro-cta:hover { color: var(--ink); border-color: var(--ink); }
+.micro-cta:hover { color: var(--accent); border-color: var(--accent); }
 
 .section-footer {
   max-width: 1200px;
@@ -529,7 +532,7 @@ h1 {
   font-weight: 500;
   transition: color 0.15s;
 }
-.page-item:hover .page-title { color: var(--brand); }
+.page-item:hover .page-title { color: var(--accent); }
 .page-url {
   font-family: "DM Mono", monospace;
   font-size: 0.7rem;
@@ -616,7 +619,7 @@ h1 {
   content: "✓";
   position: absolute;
   left: 0;
-  color: var(--brand);
+  color: var(--accent);
   font-size: 0.8rem;
   top: 1px;
 }
@@ -665,8 +668,8 @@ h1 {
   margin-left: auto;
   font-size: 0.7rem;
   font-weight: 600;
-  color: var(--brand);
-  background: color-mix(in srgb, var(--brand) 10%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   padding: 2px 8px;
   border-radius: 20px;
 }
@@ -726,7 +729,7 @@ h1 {
   position: relative;
 }
 .impact-col.before li::before { content: ""; position: absolute; left: 0; top: 8px; width: 5px; height: 1px; background: var(--line); }
-.impact-col.after li::before { content: ""; position: absolute; left: 0; top: 7px; width: 5px; height: 5px; background: var(--brand); border-radius: 50%; }
+.impact-col.after li::before { content: ""; position: absolute; left: 0; top: 7px; width: 5px; height: 5px; background: var(--accent); border-radius: 50%; }
 
 /* SETUP */
 .setup {
@@ -810,7 +813,7 @@ h1 {
   user-select: none;
   transition: color 0.15s;
 }
-.faq-item summary:hover { color: var(--brand); }
+.faq-item summary:hover { color: var(--accent); }
 .faq-item summary::-webkit-details-marker { display: none; }
 .faq-item summary::after {
   content: "+";
@@ -836,8 +839,9 @@ h1 {
   color: var(--quiet);
 }
 .faq-footer a {
-  color: var(--ink);
+  color: var(--accent);
   text-underline-offset: 3px;
+  text-decoration: underline;
 }
 
 /* CTA FINAL */
@@ -889,7 +893,7 @@ h1 {
   font-family: inherit;
   text-align: center;
 }
-.demo-form input:focus { border-color: var(--ink); background: #fff; }
+.demo-form input:focus { border-color: var(--accent); background: #fff; }
 .demo-form .btn-book { align-self: stretch; text-align: center; }
 
 .form-reassurance {
@@ -917,7 +921,7 @@ h1 {
   margin: 0;
 }
 .booking-secondary a {
-  color: var(--ink);
+  color: var(--accent);
   text-underline-offset: 3px;
 }
 .credibility {
